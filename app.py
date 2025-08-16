@@ -11,6 +11,8 @@ from services.market import (
     compute_ttm_years, get_risk_free_rate, get_spot,
     get_expiries, get_option_chain, nearest_index
 )
+from core.heatmaps import price_grid, pnl_grid
+
 
 st.set_page_config(page_title="Options Pricer", page_icon="📈" , initial_sidebar_state= 'expanded' , layout= 'wide')
 st.title("📈 Options Pricer - Black-Scholes Model")
@@ -93,9 +95,6 @@ if live_mode:
             else:
                 st.sidebar.warning("No IV available for this strike; using manual volatility.")
                 st.sidebar.info(f"Volatility used for pricing: {volatility:.2%}")
-
-
-
 
     except Exception as e:
         st.sidebar.error(f"Failed to fetch data: {e}")
@@ -249,29 +248,31 @@ with tab2:
     if enable_custom_axis:
 
 
-        def dynamic_heatmap(x_name, y_name, x_vals, y_vals, constants):
-            call_matrix = np.zeros((len(y_vals), len(x_vals)))
-            put_matrix = np.zeros((len(y_vals), len(x_vals)))
-            for i, y in enumerate(y_vals):
-                for j, x in enumerate(x_vals):
-                    inputs = constants.copy()
-                    inputs[x_name] = x
-                    inputs[y_name] = y
-                    S_ = inputs["Spot Price (S)"]
-                    K_ = inputs["Strike Price (K)"]
-                    t_ = inputs["Time to Maturity (T)"]
-                    r_ = inputs["Risk-Free Rate (r)"]
-                    sigma_ = inputs["Volatility (σ)"]
+        # def dynamic_heatmap(x_name, y_name, x_vals, y_vals, constants):
+        #     call_matrix = np.zeros((len(y_vals), len(x_vals)))
+        #     put_matrix = np.zeros((len(y_vals), len(x_vals)))
+        #     for i, y in enumerate(y_vals):
+        #         for j, x in enumerate(x_vals):
+        #             inputs = constants.copy()
+        #             inputs[x_name] = x
+        #             inputs[y_name] = y
+        #             S_ = inputs["Spot Price (S)"]
+        #             K_ = inputs["Strike Price (K)"]
+        #             t_ = inputs["Time to Maturity (T)"]
+        #             r_ = inputs["Risk-Free Rate (r)"]
+        #             sigma_ = inputs["Volatility (σ)"]
 
-                    pricer = OptionPricer(S_, K_, r_, sigma_,t_)
-                    pricer.run()
-                    call_matrix[i, j] = pricer.call_price
-                    put_matrix[i, j] = pricer.put_price
-            return call_matrix, put_matrix
+        #             pricer = OptionPricer(S_, K_, r_, sigma_,t_)
+        #             pricer.run()
+        #             call_matrix[i, j] = pricer.call_price
+        #             put_matrix[i, j] = pricer.put_price
+        #     return call_matrix, put_matrix
 
         x_vals = param_ranges[x_axis_param]
         y_vals = param_ranges[y_axis_param]
-        call_data, put_data = dynamic_heatmap(x_axis_param, y_axis_param, x_vals, y_vals, fixed_params)
+        # call_data, put_data = dynamic_heatmap(x_axis_param, y_axis_param, x_vals, y_vals, fixed_params)
+        call_data, put_data = price_grid(x_axis_param, y_axis_param, x_vals, y_vals, fixed_params)
+
         col5, col6 = st.columns(2, gap='small')
 
         with col5:
@@ -324,18 +325,28 @@ with tab2:
 
         spot_range = np.linspace(min_S ,max_S ,10)
         vol_range = np.linspace(min_sigma,max_sigma,10)
-        def heatmap(pricer,spot_range,vol_range):
-            call_price_a = np.zeros((len(vol_range), len(spot_range)) )   
-            put_price_a = np.zeros((len(vol_range), len(spot_range)) )   
-            for i, vol in enumerate(vol_range):
-                for j, spot in enumerate(spot_range):
-                    temp_pricer = OptionPricer(spot, pricer.K, pricer.r ,vol, pricer.t)
-                    temp_pricer.run()
-                    call_price_a[i,j] = temp_pricer.call_price
-                    put_price_a[i,j] = temp_pricer.put_price
+        # def heatmap(pricer,spot_range,vol_range):
+        #     call_price_a = np.zeros((len(vol_range), len(spot_range)) )   
+        #     put_price_a = np.zeros((len(vol_range), len(spot_range)) )   
+        #     for i, vol in enumerate(vol_range):
+        #         for j, spot in enumerate(spot_range):
+        #             temp_pricer = OptionPricer(spot, pricer.K, pricer.r ,vol, pricer.t)
+        #             temp_pricer.run()
+        #             call_price_a[i,j] = temp_pricer.call_price
+        #             put_price_a[i,j] = temp_pricer.put_price
 
-            return call_price_a, put_price_a
-        call_data, put_data = heatmap(pricer, spot_range, vol_range)
+        #     return call_price_a, put_price_a
+        # call_data, put_data = heatmap(pricer, spot_range, vol_range)
+        # Build constants from current pricer (same as before)
+        constants = {
+            "Spot Price (S)": pricer.S,
+            "Strike Price (K)": pricer.K,
+            "Time to Maturity (T)": pricer.t,
+            "Risk-Free Rate (r)": pricer.r,
+            "Volatility (σ)": pricer.sigma,
+        }
+        call_data, put_data = price_grid("Spot Price (S)", "Volatility (σ)", spot_range, vol_range, constants)
+
         col5, col6 = st.columns(2, gap='small')
 
         with col5:
@@ -395,33 +406,36 @@ with tab3:
     fixed_vals.pop(shared_inputs["x_axis_param"])
     fixed_vals.pop(shared_inputs["y_axis_param"])
     # Heatmap generation function for P&L
-    def pnl_heatmap(x_name, y_name, x_vals, y_vals, constants, call_price_paid,put_price_paid):
-        pnl_call_matrix = np.zeros((len(y_vals), len(x_vals)))
-        pnl_put_matrix = np.zeros((len(y_vals), len(x_vals)))
-        for i, y in enumerate(y_vals):
-            for j, x in enumerate(x_vals):
-                inputs = constants.copy()
-                inputs[x_name] = x
-                inputs[y_name] = y
+    # def pnl_heatmap(x_name, y_name, x_vals, y_vals, constants, call_price_paid,put_price_paid):
+    #     pnl_call_matrix = np.zeros((len(y_vals), len(x_vals)))
+    #     pnl_put_matrix = np.zeros((len(y_vals), len(x_vals)))
+    #     for i, y in enumerate(y_vals):
+    #         for j, x in enumerate(x_vals):
+    #             inputs = constants.copy()
+    #             inputs[x_name] = x
+    #             inputs[y_name] = y
 
-                S_ = inputs["Spot Price (S)"]
-                K_ = inputs["Strike Price (K)"]
-                t_ = inputs["Time to Maturity (T)"]
-                r_ = inputs["Risk-Free Rate (r)"]
-                sigma_ = inputs["Volatility (σ)"]
+    #             S_ = inputs["Spot Price (S)"]
+    #             K_ = inputs["Strike Price (K)"]
+    #             t_ = inputs["Time to Maturity (T)"]
+    #             r_ = inputs["Risk-Free Rate (r)"]
+    #             sigma_ = inputs["Volatility (σ)"]
 
-                pricer = OptionPricer(S_, K_, r_, sigma_,t_)
-                pricer.run()
-                pnl_call = pricer.call_price - call_price_paid
-                pnl_put = pricer.put_price - put_price_paid
-                pnl_call_matrix[i, j] = pnl_call
-                pnl_put_matrix[i, j] = pnl_put
+    #             pricer = OptionPricer(S_, K_, r_, sigma_,t_)
+    #             pricer.run()
+    #             pnl_call = pricer.call_price - call_price_paid
+    #             pnl_put = pricer.put_price - put_price_paid
+    #             pnl_call_matrix[i, j] = pnl_call
+    #             pnl_put_matrix[i, j] = pnl_put
 
-        return pnl_call_matrix,pnl_put_matrix
+    #     return pnl_call_matrix,pnl_put_matrix
 
     x_vals = param_ranges[x_axis_param]
     y_vals = param_ranges[y_axis_param]
-    pnl_call_data,pnl_put_data  = pnl_heatmap(x_axis_param, y_axis_param, x_vals, y_vals, fixed_params, call_price_paid,put_price_paid)
+    #pnl_call_data,pnl_put_data  = pnl_heatmap(x_axis_param, y_axis_param, x_vals, y_vals, fixed_params, call_price_paid,put_price_paid)
+    pnl_call_data, pnl_put_data = pnl_grid(
+    x_axis_param, y_axis_param, x_vals, y_vals, fixed_params, call_price_paid, put_price_paid)
+    
     col7, col8 = st.columns(2, gap='small')
     # Plotting P&L Heatmap
     with col7:

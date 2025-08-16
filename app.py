@@ -7,11 +7,10 @@ import seaborn as sns
 import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
-from services.market import (
-    compute_ttm_years, get_risk_free_rate, get_spot,
-    get_expiries, get_option_chain, nearest_index
-)
+from services.market import (compute_ttm_years, get_risk_free_rate, get_spot,get_expiries, get_option_chain, nearest_index)
 from core.heatmaps import price_grid, pnl_grid
+from core.strategies import (straddle_pnl_curve, strangle_pnl_curve, iron_condor_net_credit,iron_condor_payoff_at_expiry,butterfly_pnl_curve)
+
 
 
 st.set_page_config(page_title="Options Pricer", page_icon="📈" , initial_sidebar_state= 'expanded' , layout= 'wide')
@@ -248,25 +247,6 @@ with tab2:
     if enable_custom_axis:
 
 
-        # def dynamic_heatmap(x_name, y_name, x_vals, y_vals, constants):
-        #     call_matrix = np.zeros((len(y_vals), len(x_vals)))
-        #     put_matrix = np.zeros((len(y_vals), len(x_vals)))
-        #     for i, y in enumerate(y_vals):
-        #         for j, x in enumerate(x_vals):
-        #             inputs = constants.copy()
-        #             inputs[x_name] = x
-        #             inputs[y_name] = y
-        #             S_ = inputs["Spot Price (S)"]
-        #             K_ = inputs["Strike Price (K)"]
-        #             t_ = inputs["Time to Maturity (T)"]
-        #             r_ = inputs["Risk-Free Rate (r)"]
-        #             sigma_ = inputs["Volatility (σ)"]
-
-        #             pricer = OptionPricer(S_, K_, r_, sigma_,t_)
-        #             pricer.run()
-        #             call_matrix[i, j] = pricer.call_price
-        #             put_matrix[i, j] = pricer.put_price
-        #     return call_matrix, put_matrix
 
         x_vals = param_ranges[x_axis_param]
         y_vals = param_ranges[y_axis_param]
@@ -325,19 +305,6 @@ with tab2:
 
         spot_range = np.linspace(min_S ,max_S ,10)
         vol_range = np.linspace(min_sigma,max_sigma,10)
-        # def heatmap(pricer,spot_range,vol_range):
-        #     call_price_a = np.zeros((len(vol_range), len(spot_range)) )   
-        #     put_price_a = np.zeros((len(vol_range), len(spot_range)) )   
-        #     for i, vol in enumerate(vol_range):
-        #         for j, spot in enumerate(spot_range):
-        #             temp_pricer = OptionPricer(spot, pricer.K, pricer.r ,vol, pricer.t)
-        #             temp_pricer.run()
-        #             call_price_a[i,j] = temp_pricer.call_price
-        #             put_price_a[i,j] = temp_pricer.put_price
-
-        #     return call_price_a, put_price_a
-        # call_data, put_data = heatmap(pricer, spot_range, vol_range)
-        # Build constants from current pricer (same as before)
         constants = {
             "Spot Price (S)": pricer.S,
             "Strike Price (K)": pricer.K,
@@ -405,37 +372,13 @@ with tab3:
     fixed_vals = shared_inputs["param_defaults"].copy()
     fixed_vals.pop(shared_inputs["x_axis_param"])
     fixed_vals.pop(shared_inputs["y_axis_param"])
-    # Heatmap generation function for P&L
-    # def pnl_heatmap(x_name, y_name, x_vals, y_vals, constants, call_price_paid,put_price_paid):
-    #     pnl_call_matrix = np.zeros((len(y_vals), len(x_vals)))
-    #     pnl_put_matrix = np.zeros((len(y_vals), len(x_vals)))
-    #     for i, y in enumerate(y_vals):
-    #         for j, x in enumerate(x_vals):
-    #             inputs = constants.copy()
-    #             inputs[x_name] = x
-    #             inputs[y_name] = y
 
-    #             S_ = inputs["Spot Price (S)"]
-    #             K_ = inputs["Strike Price (K)"]
-    #             t_ = inputs["Time to Maturity (T)"]
-    #             r_ = inputs["Risk-Free Rate (r)"]
-    #             sigma_ = inputs["Volatility (σ)"]
-
-    #             pricer = OptionPricer(S_, K_, r_, sigma_,t_)
-    #             pricer.run()
-    #             pnl_call = pricer.call_price - call_price_paid
-    #             pnl_put = pricer.put_price - put_price_paid
-    #             pnl_call_matrix[i, j] = pnl_call
-    #             pnl_put_matrix[i, j] = pnl_put
-
-    #     return pnl_call_matrix,pnl_put_matrix
 
     x_vals = param_ranges[x_axis_param]
     y_vals = param_ranges[y_axis_param]
-    #pnl_call_data,pnl_put_data  = pnl_heatmap(x_axis_param, y_axis_param, x_vals, y_vals, fixed_params, call_price_paid,put_price_paid)
     pnl_call_data, pnl_put_data = pnl_grid(
     x_axis_param, y_axis_param, x_vals, y_vals, fixed_params, call_price_paid, put_price_paid)
-    
+
     col7, col8 = st.columns(2, gap='small')
     # Plotting P&L Heatmap
     with col7:
@@ -485,12 +428,28 @@ with tab4:
     is_short = (position_type == "Short")
     if view_mode == "📈 Line Payoff Chart":
         S_range = np.linspace(spot_price * 0.5, spot_price * 1.5, 200)
-        pnl = []
-        for S in S_range:
-            call_pnl = max(S - call_strike, 0) - call_price_paid
-            put_pnl = max(put_strike - S, 0) - put_price_paid
-            total = call_pnl + put_pnl
-            pnl.append(-total if is_short else total)
+        if strategy_type == "Straddle":
+            pnl = straddle_pnl_curve(S_range, call_strike, put_strike, call_price_paid, put_price_paid, short=is_short)
+
+        elif strategy_type == "Strangle":
+            pnl = strangle_pnl_curve(S_range, call_strike, put_strike, call_price_paid, put_price_paid, short=is_short)
+
+        else:  # Custom
+            pnl = []
+            for S in S_range:
+                call_pnl = max(S - call_strike, 0) - call_price_paid
+                put_pnl = max(put_strike - S, 0) - put_price_paid
+                total = call_pnl + put_pnl
+                pnl.append(-total if is_short else total)
+            pnl = np.array(pnl)
+
+        #pnl = []
+        # for S in S_range:
+        #     call_pnl = max(S - call_strike, 0) - call_price_paid
+        #     put_pnl = max(put_strike - S, 0) - put_price_paid
+        #     total = call_pnl + put_pnl
+        #     pnl.append(-total if is_short else total)
+
 
         spacer_left, main, spacer_right = st.columns([1, 5, 1])
         with main:
@@ -621,106 +580,179 @@ with tab5:
 
         net_credit = sell_put + sell_call - (buy_put + buy_call)
         if view_mode == "📈 Line Payoff Chart":
-            def iron_condor_pnl(S_val):
-                payoff = (-max(put_lower -S_val,0) + max(put_outer-S_val,0) - max(S_val-call_upper,0) + max(S_val-call_outer,0))
-                return payoff+net_credit if strategy == "Iron Condor" else -payoff - net_credit
+            # def iron_condor_pnl(S_val):
+            #     payoff = (-max(put_lower -S_val,0) + max(put_outer-S_val,0) - max(S_val-call_upper,0) + max(S_val-call_outer,0))
+            #     return payoff+net_credit if strategy == "Iron Condor" else -payoff - net_credit
             
-            # expected_move_pct  = volatility*np.sqrt(TTM)
-            # S_vals = np.linspace(spot_price*(1-2*expected_move_pct) ,spot_price*(1+2*expected_move_pct),50)
-            pnl_vals = [iron_condor_pnl(s) for s in S_vals] 
+            # # expected_move_pct  = volatility*np.sqrt(TTM)
+            # # S_vals = np.linspace(spot_price*(1-2*expected_move_pct) ,spot_price*(1+2*expected_move_pct),50)
+            # pnl_vals = [iron_condor_pnl(s) for s in S_vals] 
+            # spacer_left, main, spacer_right = st.columns([1, 5, 1])
+            # with main:
+            #     fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
+            #     ax.plot(S_vals, pnl_vals, label="Iron Condor P&L", color="blue", linewidth=2)
+            #     ax.axhline(0, color="black", linestyle="--")
+            #     ax.set_xlabel("Spot Price at Expiration")
+            #     ax.set_ylabel("P&L")
+            #     ax.set_title("Iron Condor Strategy Payoff")
+            #     ax.legend()
+            #     st.pyplot(fig)
+            def iron_condor_total_pnl(S_val):
+                base_payoff = iron_condor_payoff_at_expiry(S_val, put_lower, put_outer, call_upper, call_outer)
+                # Net credit computed at current spot/vol/rate/TTM
+                net_credit_local = iron_condor_net_credit(spot_price, interest_rate, volatility, TTM,
+                                                        put_outer, put_lower, call_upper, call_outer)
+                if strategy == "Iron Condor":
+                    return base_payoff + net_credit_local
+                else:  # Reverse Iron Condor
+                    return -(base_payoff + net_credit_local)
+            pnl_vals = [iron_condor_total_pnl(s) for s in S_vals]
+
             spacer_left, main, spacer_right = st.columns([1, 5, 1])
             with main:
                 fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
-                ax.plot(S_vals, pnl_vals, label="Iron Condor P&L", color="blue", linewidth=2)
+                ax.plot(S_vals, pnl_vals, label=f"{strategy} P&L", linewidth=2)
                 ax.axhline(0, color="black", linestyle="--")
                 ax.set_xlabel("Spot Price at Expiration")
                 ax.set_ylabel("P&L")
-                ax.set_title("Iron Condor Strategy Payoff")
+                ax.set_title(f"{strategy} Strategy Payoff")
                 ax.legend()
                 st.pyplot(fig)
+
         elif view_mode == "🗺️ Payoff Heatmap":
+        #     strike_spreads = np.arange(2, 11, 1)
+
+        #     payoff_matrix = np.zeros((len(strike_spreads), len(S_vals)))
+        #     for i, spread in enumerate(strike_spreads):
+        #         pl = strike_price - spread
+        #         po = pl - spread
+        #         cu = strike_price + spread
+        #         co = cu + spread
+        #         buy_put = OptionPricer(spot_price, po, interest_rate, volatility, TTM); buy_put.run()
+        #         sell_put = OptionPricer(spot_price, pl, interest_rate, volatility, TTM); sell_put.run()
+        #         sell_call = OptionPricer(spot_price, cu, interest_rate, volatility, TTM); sell_call.run()
+        #         buy_call = OptionPricer(spot_price, co, interest_rate, volatility, TTM); buy_call.run()
+        #         credit = sell_put.put_price + sell_call.call_price - (buy_put.put_price + buy_call.call_price)
+
+        #         for j, S_exp in enumerate(S_vals):
+        #             payoff = (-max(pl - S_exp, 0) + max(po - S_exp, 0) - max(S_exp - cu, 0) + max(S_exp - co, 0))
+        #             payoff_matrix[i, j] = payoff + credit if strategy == "Iron Condor" else -payoff - credit
+
+        #     # Create 3-column layout to center content
+        #     spread_data = []
+        #     for spread in np.arange(2, 11, 1):
+        #         pl = strike_price - spread
+        #         po = pl - spread
+        #         cu = strike_price + spread
+        #         co = cu + spread
+
+        # # Use OptionPricer to get premiums
+        #         buy_put = OptionPricer(spot_price, po, interest_rate, volatility, TTM); buy_put.run()
+        #         sell_put = OptionPricer(spot_price, pl, interest_rate, volatility, TTM); sell_put.run()
+        #         sell_call = OptionPricer(spot_price, cu, interest_rate, volatility, TTM); sell_call.run()
+        #         buy_call = OptionPricer(spot_price, co, interest_rate, volatility, TTM); buy_call.run()
+
+        #         net_credit = sell_put.put_price + sell_call.call_price - (buy_put.put_price + buy_call.call_price)
+
+        #         if strategy == "Iron Condor":
+        #             max_profit = round(net_credit, 2)
+        #             max_loss = round(spread - net_credit, 2)
+        #             breakeven_low = round(pl - net_credit, 2)
+        #             breakeven_high = round(cu + net_credit, 2)
+        #         else:  # Reverse Iron Condor
+        #             max_profit = round(spread - net_credit, 2)
+        #             max_loss = round(net_credit, 2)
+        #             breakeven_low = round(pl - net_credit, 2)
+        #             breakeven_high = round(cu + net_credit, 2)
+
+        #         spread_data.append({
+        #             "Spread Width": spread,
+        #             "Put Spread": f"{po}-{pl}",
+        #             "Call Spread": f"{cu}-{co}",
+        #             "Max Profit ($)": max_profit,
+        #             "Max Loss ($)": max_loss,
+        #             "Breakeven Low": breakeven_low,
+        #             "Breakeven High": breakeven_high
+        #         })
+        #     spacer_left, main, spacer_right = st.columns([1, 5, 1])
+
+        #     with main:
+        #         st.markdown("### 📊 Iron Condor P&L Heatmap (Volatility-Adjusted)")
+
+        #         fig, ax = plt.subplots(figsize=(8, 4), dpi=100)  # Shrunk size
+        #         sns.heatmap(
+        #             payoff_matrix,
+        #             xticklabels=np.round(S_vals, 1),
+        #             yticklabels=strike_spreads,
+        #             cmap="RdYlGn",
+        #             annot=False,
+        #             fmt=".2f",
+        #             cbar_kws={"label": "Net P&L"},
+        #             ax=ax
+        #         )
+        #         ax.set_xlabel("Spot Price at Expiration (σ√T adjusted)")
+        #         ax.set_ylabel("Strike Spread Width")
+        #         ax.set_title(f"{strategy} P&L Heatmap (Volatility-Adjusted)")
+        #         ax.set_xticks(ax.get_xticks()[::5])  # adjust tick density
+        #         plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+        #         st.pyplot(fig)
+        #         st.markdown("### 📋 Iron Condor Summary Table (Strike Spread vs. Profit/Loss)")
+
+
+        #         df_summary = pd.DataFrame(spread_data)
+        #         st.dataframe(df_summary.style.format(precision=2), use_container_width=True)
+        # --- NEW Iron Condor heatmap using helpers ---
             strike_spreads = np.arange(2, 11, 1)
-            # expected_move = volatility * np.sqrt(TTM)
-            # S_vals = np.linspace(
-            #     spot_price * (1 - 2 * expected_move),
-            #     spot_price * (1 + 2 * expected_move),
-            #     50
-            # )
             payoff_matrix = np.zeros((len(strike_spreads), len(S_vals)))
-            for i, spread in enumerate(strike_spreads):
-                pl = strike_price - spread
-                po = pl - spread
-                cu = strike_price + spread
-                co = cu + spread
-                buy_put = OptionPricer(spot_price, po, interest_rate, volatility, TTM); buy_put.run()
-                sell_put = OptionPricer(spot_price, pl, interest_rate, volatility, TTM); sell_put.run()
-                sell_call = OptionPricer(spot_price, cu, interest_rate, volatility, TTM); sell_call.run()
-                buy_call = OptionPricer(spot_price, co, interest_rate, volatility, TTM); buy_call.run()
-                credit = sell_put.put_price + sell_call.call_price - (buy_put.put_price + buy_call.call_price)
-
-                for j, S_exp in enumerate(S_vals):
-                    payoff = (-max(pl - S_exp, 0) + max(po - S_exp, 0) - max(S_exp - cu, 0) + max(S_exp - co, 0))
-                    payoff_matrix[i, j] = payoff + credit if strategy == "Iron Condor" else -payoff - credit
-
-
-            # fig, ax = plt.subplots(figsize=(12, 6), dpi=100)
-            # sns.heatmap(
-            # payoff_matrix,
-            # xticklabels=np.round(S_vals, 1),
-            # yticklabels=strike_spreads,
-            # cmap="RdYlGn",
-            # annot=False,
-            # fmt=".2f",
-            # cbar_kws={"label": "Net P&L"},
-            # ax=ax)
-            # ax.set_xlabel("Spot Price at Expiration (σ√T adjusted)")
-            # ax.set_ylabel("Strike Spread Width")
-            # ax.set_title("Iron Condor P&L Heatmap (Volatility-Adjusted)")
-            # st.pyplot(fig)
-            # # === Summary Table for Iron Condor ===
-            # st.subheader("📋 Iron Condor Summary Table (Strike Spread vs. Profit/Loss)")
-            # Create 3-column layout to center content
             spread_data = []
-            for spread in np.arange(2, 11, 1):
-                pl = strike_price - spread
-                po = pl - spread
-                cu = strike_price + spread
-                co = cu + spread
 
-        # Use OptionPricer to get premiums
-                buy_put = OptionPricer(spot_price, po, interest_rate, volatility, TTM); buy_put.run()
-                sell_put = OptionPricer(spot_price, pl, interest_rate, volatility, TTM); sell_put.run()
-                sell_call = OptionPricer(spot_price, cu, interest_rate, volatility, TTM); sell_call.run()
-                buy_call = OptionPricer(spot_price, co, interest_rate, volatility, TTM); buy_call.run()
+            for i, spread in enumerate(strike_spreads):
+                pl = strike_price - spread       # put inner (short put strike)
+                po = pl - spread                 # put outer (long put strike)
+                cu = strike_price + spread       # call inner (short call strike)
+                co = cu + spread                 # call outer (long call strike)
 
-                net_credit = sell_put.put_price + sell_call.call_price - (buy_put.put_price + buy_call.call_price)
+                # Net credit at current spot/r/vol/T
+                credit_i = iron_condor_net_credit(spot_price, interest_rate, volatility, TTM, po, pl, cu, co)
 
+                # Fill payoff across S
+                for j, S_exp in enumerate(S_vals):
+                    base_payoff = iron_condor_payoff_at_expiry(S_exp, pl, po, cu, co)
+                    payoff = base_payoff + credit_i
+                    payoff_matrix[i, j] = payoff if strategy == "Iron Condor" else -payoff
+
+                # Summary metrics (same formulas as before, but use credit_i)
                 if strategy == "Iron Condor":
-                    max_profit = round(net_credit, 2)
-                    max_loss = round(spread - net_credit, 2)
-                    breakeven_low = round(pl - net_credit, 2)
-                    breakeven_high = round(cu + net_credit, 2)
+                    max_profit = round(credit_i, 2)
+                    max_loss   = round(spread - credit_i, 2)
+                    breakeven_low  = round(pl - credit_i, 2)
+                    breakeven_high = round(cu + credit_i, 2)
+                    net_label = "Net Credit ($)"
+                    net_value = round(credit_i, 2)
                 else:  # Reverse Iron Condor
-                    max_profit = round(spread - net_credit, 2)
-                    max_loss = round(net_credit, 2)
-                    breakeven_low = round(pl - net_credit, 2)
-                    breakeven_high = round(cu + net_credit, 2)
+                    max_profit = round(spread - credit_i, 2)
+                    max_loss   = round(credit_i, 2)
+                    breakeven_low  = round(pl - credit_i, 2)
+                    breakeven_high = round(cu + credit_i, 2)
+                    net_label = "Net Debit ($)"   # reverse usually costs a debit
+                    net_value = round(credit_i, 2)  # keep sign as computed; label clarifies
 
                 spread_data.append({
                     "Spread Width": spread,
                     "Put Spread": f"{po}-{pl}",
                     "Call Spread": f"{cu}-{co}",
+                    net_label: net_value,
                     "Max Profit ($)": max_profit,
                     "Max Loss ($)": max_loss,
                     "Breakeven Low": breakeven_low,
                     "Breakeven High": breakeven_high
                 })
+
             spacer_left, main, spacer_right = st.columns([1, 5, 1])
 
             with main:
                 st.markdown("### 📊 Iron Condor P&L Heatmap (Volatility-Adjusted)")
-
-                fig, ax = plt.subplots(figsize=(8, 4), dpi=100)  # Shrunk size
+                fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
                 sns.heatmap(
                     payoff_matrix,
                     xticklabels=np.round(S_vals, 1),
@@ -734,12 +766,12 @@ with tab5:
                 ax.set_xlabel("Spot Price at Expiration (σ√T adjusted)")
                 ax.set_ylabel("Strike Spread Width")
                 ax.set_title(f"{strategy} P&L Heatmap (Volatility-Adjusted)")
-                ax.set_xticks(ax.get_xticks()[::5])  # adjust tick density
+                if len(S_vals) > 20:
+                    ax.set_xticks(ax.get_xticks()[::5])
                 plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
                 st.pyplot(fig)
+
                 st.markdown("### 📋 Iron Condor Summary Table (Strike Spread vs. Profit/Loss)")
-
-
                 df_summary = pd.DataFrame(spread_data)
                 st.dataframe(df_summary.style.format(precision=2), use_container_width=True)
     elif strategy in ["Butterfly_Spread", "Reverse Butterfly_Spread"]:
@@ -775,79 +807,174 @@ with tab5:
         pnl_vals_b = [butterfly_pnl(s) for s in S_vals] 
         spacer_left, main, spacer_right = st.columns([1, 5, 1])
         if view_mode == "📈 Line Payoff Chart":
+            # with main:
+            #     fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
+            #     ax.plot(S_vals, pnl_vals_b, label="Butterfly P&L", color="blue", linewidth=2)
+            #     ax.axhline(0, color="black", linestyle="--")
+            #     ax.set_xlabel("Spot Price at Expiration")
+            #     ax.set_ylabel("P&L")
+            #     ax.set_title("Butterfly Strategy Payoff")
+            #     ax.legend()
+            #     st.pyplot(fig)
+            # --- NEW Butterfly line payoff using helper ---
+            pnl_vals_b = butterfly_pnl_curve(
+                S_vals,
+                lower,   # base_strike - strike_spread
+                middle,  # base_strike
+                upper,   # base_strike + strike_spread
+                net_debit,  # buy_lower + buy_upper - 2*sell_middle
+                short=(strategy == "Reverse Butterfly_Spread")
+            )
+
+            spacer_left, main, spacer_right = st.columns([1, 5, 1])
             with main:
                 fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
-                ax.plot(S_vals, pnl_vals_b, label="Butterfly P&L", color="blue", linewidth=2)
+                ax.plot(S_vals, pnl_vals_b, label=f"{strategy} P&L", linewidth=2)
                 ax.axhline(0, color="black", linestyle="--")
                 ax.set_xlabel("Spot Price at Expiration")
                 ax.set_ylabel("P&L")
-                ax.set_title("Butterfly Strategy Payoff")
+                ax.set_title(f"{strategy} Strategy Payoff")
                 ax.legend()
                 st.pyplot(fig)
+
         elif view_mode == "🗺️ Payoff Heatmap":
-            strike_spreads = np.arange(2,11,1)
-            payoff_matrix = np.zeros((len(strike_spreads),len(S_vals)))
-            spread_data_butterfly = []
-            for i,spread in enumerate(strike_spreads):
-                l = base_strike - spread
-                m = base_strike
-                u = base_strike + spread
+                # strike_spreads = np.arange(2,11,1)
+                # payoff_matrix = np.zeros((len(strike_spreads),len(S_vals)))
+                # spread_data_butterfly = []
+                # for i,spread in enumerate(strike_spreads):
+                #     l = base_strike - spread
+                #     m = base_strike
+                #     u = base_strike + spread
 
-                pricer_l = OptionPricer(spot_price, l, interest_rate, volatility, TTM);pricer_l.run()
-                pricer_m = OptionPricer(spot_price, m, interest_rate, volatility, TTM);pricer_m.run()
-                pricer_u = OptionPricer(spot_price, u, interest_rate, volatility, TTM);pricer_u.run()
+                #     pricer_l = OptionPricer(spot_price, l, interest_rate, volatility, TTM);pricer_l.run()
+                #     pricer_m = OptionPricer(spot_price, m, interest_rate, volatility, TTM);pricer_m.run()
+                #     pricer_u = OptionPricer(spot_price, u, interest_rate, volatility, TTM);pricer_u.run()
 
 
-                net_premium = pricer_l.call_price + pricer_u.call_price -2*pricer_m.call_price
-        
-                for j,S_exp in enumerate(S_vals):
-                    pnl = max(S_exp - l, 0) - 2 * max(S_exp - m, 0) + max(S_exp - u, 0)
-                    payoff = pnl-net_premium
-                    payoff_matrix[i,j] = payoff if strategy == "Butterfly_Spread" else -payoff
+                #     net_premium = pricer_l.call_price + pricer_u.call_price -2*pricer_m.call_price
             
+                #     for j,S_exp in enumerate(S_vals):
+                #         pnl = max(S_exp - l, 0) - 2 * max(S_exp - m, 0) + max(S_exp - u, 0)
+                #         payoff = pnl-net_premium
+                #         payoff_matrix[i,j] = payoff if strategy == "Butterfly_Spread" else -payoff
+                
 
 
-                if strategy == "Butterfly_Spread":
-                    max_profit = round(max(spread - net_premium, 0), 2)
-                    max_loss = round(net_premium, 2)
-                    breakeven_low = round(l + net_premium, 2)
-                    breakeven_high = round(u - net_premium, 2)
-                else:  # Reverse Butterfly
-                    max_profit = round(net_premium, 2)
-                    max_loss = round(max(spread - net_premium, 0), 2)
-                    breakeven_low = round(l + (spread - net_premium), 2)
-                    breakeven_high = round(u - (spread - net_premium), 2)
-                net_label = "Net Debit ($)" if strategy == "Butterfly_Spread" else "Net Credit ($)"
-                spread_data_butterfly.append({
-                    "Spread Width": spread,
-                    "Strikes": f"{l}-{m}-{u}",
-                    net_label:round(net_premium, 2),
-                    "Max Profit ($)": max_profit,
-                    "Max Loss ($)": max_loss,
-                    "Breakeven Low": breakeven_low,
-                    "Breakeven High": breakeven_high})
+                #     if strategy == "Butterfly_Spread":
+                #         max_profit = round(max(spread - net_premium, 0), 2)
+                #         max_loss = round(net_premium, 2)
+                #         breakeven_low = round(l + net_premium, 2)
+                #         breakeven_high = round(u - net_premium, 2)
+                #     else:  # Reverse Butterfly
+                #         max_profit = round(net_premium, 2)
+                #         max_loss = round(max(spread - net_premium, 0), 2)
+                #         breakeven_low = round(l + (spread - net_premium), 2)
+                #         breakeven_high = round(u - (spread - net_premium), 2)
+                #     net_label = "Net Debit ($)" if strategy == "Butterfly_Spread" else "Net Credit ($)"
+                #     spread_data_butterfly.append({
+                #         "Spread Width": spread,
+                #         "Strikes": f"{l}-{m}-{u}",
+                #         net_label:round(net_premium, 2),
+                #         "Max Profit ($)": max_profit,
+                #         "Max Loss ($)": max_loss,
+                #         "Breakeven Low": breakeven_low,
+                #         "Breakeven High": breakeven_high})
 
-            with main:
-                fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
-                sns.heatmap(
-                    payoff_matrix,
-                    xticklabels=np.round(S_vals, 1),
-                    yticklabels=strike_spreads,
-                    cmap="RdYlGn",
-                    annot=False,
-                    fmt=".2f",
-                    cbar_kws={"label": "Net P&L"},
-                    ax=ax
-                )
-                ax.set_xlabel("Spot Price at Expiration")
-                ax.set_ylabel("Strike Spread Width")
-                ax.set_title(f"{strategy} P&L Heatmap (Volatility-Adjusted)")
-                if len(S_vals) > 20:
-                    ax.set_xticks(ax.get_xticks()[::5])
-                #ax.set_xticks(ax.get_xticks()[::5])
-                plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
-                st.pyplot(fig)  
-                st.markdown("### 📋 Butterfly Spread Summary Table (Strike Spread vs. Profit/Loss)")
-                df_butterfly_summary = pd.DataFrame(spread_data_butterfly)
-                st.dataframe(df_butterfly_summary.style.format(precision=2), use_container_width=True)
+                # with main:
+                #     fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
+                #     sns.heatmap(
+                #         payoff_matrix,
+                #         xticklabels=np.round(S_vals, 1),
+                #         yticklabels=strike_spreads,
+                #         cmap="RdYlGn",
+                #         annot=False,
+                #         fmt=".2f",
+                #         cbar_kws={"label": "Net P&L"},
+                #         ax=ax
+                #     )
+                #     ax.set_xlabel("Spot Price at Expiration")
+                #     ax.set_ylabel("Strike Spread Width")
+                #     ax.set_title(f"{strategy} P&L Heatmap (Volatility-Adjusted)")
+                #     if len(S_vals) > 20:
+                #         ax.set_xticks(ax.get_xticks()[::5])
+                #     #ax.set_xticks(ax.get_xticks()[::5])
+                #     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+                #     st.pyplot(fig)  
+                #     st.markdown("### 📋 Butterfly Spread Summary Table (Strike Spread vs. Profit/Loss)")
+                #     df_butterfly_summary = pd.DataFrame(spread_data_butterfly)
+                #     st.dataframe(df_butterfly_summary.style.format(precision=2), use_container_width=True)
 
+                # --- NEW Butterfly heatmap (volatility-adjusted S grid) + summary table ---
+                strike_spreads = np.arange(2, 11, 1)             # widths to sweep (L/M/U distance)
+                payoff_matrix = np.zeros((len(strike_spreads), len(S_vals)))
+                spread_data_butterfly = []
+
+                for i, spread in enumerate(strike_spreads):
+                    l = base_strike - spread
+                    m = base_strike
+                    u = base_strike + spread
+
+                    # Premiums at current spot/r/vol/T (use calls, symmetric construction)
+                    pricer_l = OptionPricer(spot_price, l, interest_rate, volatility, TTM); pricer_l.run()
+                    pricer_m = OptionPricer(spot_price, m, interest_rate, volatility, TTM); pricer_m.run()
+                    pricer_u = OptionPricer(spot_price, u, interest_rate, volatility, TTM); pricer_u.run()
+
+                    net_premium = pricer_l.call_price + pricer_u.call_price - 2 * pricer_m.call_price  # net_debit for standard butterfly
+
+                    # Fill payoff across S (expiry)
+                    for j, S_exp in enumerate(S_vals):
+                        base_payoff = (max(S_exp - l, 0) - 2 * max(S_exp - m, 0) + max(S_exp - u, 0))
+                        payoff = base_payoff - net_premium
+                        payoff_matrix[i, j] = payoff if strategy == "Butterfly_Spread" else -payoff
+
+                    # Summary metrics
+                    if strategy == "Butterfly_Spread":
+                        # Long butterfly: typically a net debit
+                        max_profit     = round(max(spread - net_premium, 0), 2)
+                        max_loss       = round(max(net_premium, 0), 2)
+                        breakeven_low  = round(l + net_premium, 2)
+                        breakeven_high = round(u - net_premium, 2)
+                        net_label, net_value = "Net Debit ($)", round(net_premium, 2)
+                    else:
+                        # Reverse butterfly: typically a net credit (profit on wings, risk near middle)
+                        max_profit     = round(max(net_premium, 0), 2)
+                        max_loss       = round(max(spread - net_premium, 0), 2)
+                        breakeven_low  = round(l + (spread - net_premium), 2)
+                        breakeven_high = round(u - (spread - net_premium), 2)
+                        net_label, net_value = "Net Credit ($)", round(net_premium, 2)  # keep sign as computed; label clarifies
+
+                    spread_data_butterfly.append({
+                        "Spread Width": spread,
+                        "Strikes": f"{l}-{m}-{u}",
+                        net_label: net_value,
+                        "Max Profit ($)": max_profit,
+                        "Max Loss ($)": max_loss,
+                        "Breakeven Low": breakeven_low,
+                        "Breakeven High": breakeven_high
+                    })
+
+                spacer_left, main, spacer_right = st.columns([1, 5, 1])
+                with main:
+                    st.markdown(f"### 📊 {strategy} P&L Heatmap (Volatility-Adjusted)")
+                    fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
+                    sns.heatmap(
+                        payoff_matrix,
+                        xticklabels=np.round(S_vals, 1),
+                        yticklabels=strike_spreads,
+                        cmap="RdYlGn",
+                        annot=False,
+                        fmt=".2f",
+                        cbar_kws={"label": "Net P&L"},
+                        ax=ax
+                    )
+                    ax.set_xlabel("Spot Price at Expiration (σ√T adjusted)")
+                    ax.set_ylabel("Strike Spread Width")
+                    ax.set_title(f"{strategy} P&L Heatmap (Volatility-Adjusted)")
+                    if len(S_vals) > 20:
+                        ax.set_xticks(ax.get_xticks()[::5])
+                    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+                    st.pyplot(fig)
+
+                    st.markdown("### 📋 Butterfly Spread Summary Table (Strike Spread vs. Profit/Loss)")
+                    df_butterfly_summary = pd.DataFrame(spread_data_butterfly)
+                    st.dataframe(df_butterfly_summary.style.format(precision=2), use_container_width=True)
